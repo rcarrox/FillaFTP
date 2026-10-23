@@ -8,6 +8,9 @@ import java.security.KeyStore
 import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
 import java.io.Closeable
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.time.Duration
@@ -99,6 +102,47 @@ class FtpRepository private constructor(
         check(client.rename(entry.path, destination)) { "Renommage refusé : ${client.replyString.trim()}" }
     }
 
+    /** Déplace un élément sur le même serveur FTP. Le renommage FTP peut aussi changer son dossier parent. */
+    @Synchronized
+    fun move(entry: RemoteEntry, destinationDirectory: String) {
+        val destination = RemotePaths.child(destinationDirectory, entry.name)
+        if (destination == entry.path) return
+        if (entry.isDirectory) {
+            require(!isSameOrDescendant(destination, entry.path)) {
+                "Impossible de déplacer un dossier dans lui-même."
+            }
+        }
+        require(!exists(destinationDirectory, entry.name)) { "Un élément porte déjà ce nom dans ce dossier." }
+        check(client.rename(entry.path, destination)) { "Déplacement refusé : ${client.replyString.trim()}" }
+    }
+
+    /** Copie récursivement un fichier ou un dossier sur le même serveur FTP. */
+    @Synchronized
+    fun copy(entry: RemoteEntry, destinationDirectory: String, temporaryDirectory: File) {
+        val destination = RemotePaths.child(destinationDirectory, entry.name)
+        if (entry.isDirectory) {
+            require(!isSameOrDescendant(destination, entry.path)) {
+                "Impossible de copier un dossier dans lui-même."
+            }
+        }
+        require(!exists(destinationDirectory, entry.name)) { "Un élément porte déjà ce nom dans ce dossier." }
+        val parent = RemotePaths.normalize(destinationDirectory)
+        val stagingName = ".${entry.name}.pocketftp-copy"
+        val stagingPath = RemotePaths.child(parent, stagingName)
+        require(!exists(parent, stagingName)) { "Un transfert temporaire existe déjà pour ${entry.name}." }
+        try {
+            copyNode(entry.path, stagingPath, entry.isDirectory, temporaryDirectory)
+            check(client.rename(stagingPath, destination)) {
+                "Copie préparée, mais renommage final refusé : ${client.replyString.trim()}"
+            }
+        } catch (e: Exception) {
+            runCatching {
+                if (entry.isDirectory) removeRecursively(stagingPath) else client.deleteFile(stagingPath)
+            }
+            throw e
+        }
+    }
+
     @Synchronized
     fun delete(entry: RemoteEntry) {
         val ok = if (entry.isDirectory) client.removeDirectory(entry.path) else client.deleteFile(entry.path)
@@ -130,6 +174,60 @@ class FtpRepository private constructor(
 
     private fun exists(parent: String, name: String): Boolean =
         client.listFiles(RemotePaths.normalize(parent))?.any { it.name == name } == true
+
+    private fun copyNode(source: String, destination: String, isDirectory: Boolean, temporaryDirectory: File) {
+        if (isDirectory) {
+            check(client.makeDirectory(destination)) {
+                "Création du dossier de copie refusée : ${client.replyString.trim()}"
+            }
+            val children = list(source)
+            for (child in children) {
+                copyNode(child.path, RemotePaths.child(destination, child.name), child.isDirectory, temporaryDirectory)
+            }
+            return
+        }
+
+        check(temporaryDirectory.exists() || temporaryDirectory.mkdirs()) { "Espace temporaire indisponible." }
+        val localCopy = File.createTempFile("pocketftp-", ".tmp", temporaryDirectory)
+        try {
+            FileOutputStream(localCopy).use { output ->
+                check(client.retrieveFile(source, output)) {
+                    "Lecture de ${RemotePaths.name(source)} refusée : ${client.replyString.trim()}"
+                }
+            }
+            FileInputStream(localCopy).use { input ->
+                try {
+                    check(client.storeFile(destination, input)) {
+                        "Écriture de ${RemotePaths.name(destination)} refusée : ${client.replyString.trim()}"
+                    }
+                } catch (e: Exception) {
+                    runCatching { client.deleteFile(destination) }
+                    throw e
+                }
+            }
+        } finally {
+            localCopy.delete()
+        }
+    }
+
+    private fun removeRecursively(path: String) {
+        val files = client.listFiles(path) ?: return
+        if (files.any { it.isDirectory && it.name != "." && it.name != ".." }) {
+            files.filter { it.isDirectory && it.name != "." && it.name != ".." }
+                .forEach { removeRecursively(RemotePaths.child(path, it.name)) }
+        }
+        files.filter { it.name != "." && it.name != ".." }
+            .filterNot { it.isDirectory }
+            .forEach { client.deleteFile(RemotePaths.child(path, it.name)) }
+        client.removeDirectory(path)
+    }
+
+    private fun isSameOrDescendant(candidate: String, directory: String): Boolean {
+        val normalizedCandidate = RemotePaths.normalize(candidate)
+        val normalizedDirectory = RemotePaths.normalize(directory)
+        return normalizedCandidate == normalizedDirectory ||
+            normalizedCandidate.startsWith(if (normalizedDirectory == "/") "/" else "$normalizedDirectory/")
+    }
 
     @Synchronized
     override fun close() {

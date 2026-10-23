@@ -21,6 +21,8 @@ object RemotePaths {
 
     fun parent(path: String): String = normalize("${normalize(path)}/..")
 
+    fun name(path: String): String = normalize(path).substringAfterLast('/').ifEmpty { "/" }
+
     fun requireValidName(name: String) {
         require(name.isNotBlank() && name != "." && name != ".." &&
             !name.contains('/') && !name.contains('\\') &&
