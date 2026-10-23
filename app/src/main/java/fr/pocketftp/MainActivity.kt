@@ -40,6 +40,8 @@ import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -61,6 +63,7 @@ private data class DeleteRequest(
 )
 
 private data class RemoteClipboard(val entry: RemoteEntry, val move: Boolean)
+private data class PreviewDocument(val file: File, val name: String)
 
 @Composable
 private fun PocketFtpScreen() {
@@ -94,6 +97,12 @@ private fun PocketFtpScreen() {
     var directoryName by remember { mutableStateOf("") }
     var pendingDownload by remember { mutableStateOf<RemoteEntry?>(null) }
     var remoteClipboard by remember { mutableStateOf<RemoteClipboard?>(null) }
+    var previewDocument by remember { mutableStateOf<PreviewDocument?>(null) }
+
+    DisposableEffect(previewDocument) {
+        val file = previewDocument?.file
+        onDispose { file?.delete() }
+    }
 
     fun runTask(action: suspend () -> Unit) {
         if (busy) return
@@ -190,6 +199,41 @@ private fun PocketFtpScreen() {
         }
     }
 
+    fun previewRemoteFile(entry: RemoteEntry) {
+        val session = repository ?: run { notice = "Connecte-toi d'abord au serveur."; return }
+        runTask {
+            val file = withContext(Dispatchers.IO) {
+                val temporary = createPreviewTempFile(context.cacheDir, entry.name)
+                try {
+                    FileOutputStream(temporary).use { output -> session.download(entry, output) }
+                    temporary
+                } catch (e: Exception) {
+                    temporary.delete()
+                    throw e
+                }
+            }
+            previewDocument = PreviewDocument(file, entry.name)
+        }
+    }
+
+    fun previewLocalFile(file: DocumentFile) {
+        runTask {
+            val preview = withContext(Dispatchers.IO) {
+                val temporary = createPreviewTempFile(context.cacheDir, file.name ?: "document")
+                try {
+                    val input = context.contentResolver.openInputStream(file.uri)
+                        ?: error("Impossible de lire ce fichier.")
+                    input.use { source -> FileOutputStream(temporary).use { output -> source.copyTo(output) } }
+                    temporary
+                } catch (e: Exception) {
+                    temporary.delete()
+                    throw e
+                }
+            }
+            previewDocument = PreviewDocument(preview, file.name ?: "Document")
+        }
+    }
+
     fun openLocal(doc: DocumentFile) {
         if (doc.isDirectory) localStack = localStack + doc
         else {
@@ -209,7 +253,7 @@ private fun PocketFtpScreen() {
             Text("PocketFTP", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
             if (busy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-            else Text("v0.2", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            else Text("v0.3", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Spacer(Modifier.height(12.dp))
         TabRow(selectedTabIndex = tab) {
@@ -357,6 +401,7 @@ private fun PocketFtpScreen() {
                             onDownload = { pendingDownload = entry; chooseDownloadDestination.launch(entry.name) },
                             onCopy = { remoteClipboard = RemoteClipboard(entry, move = false); notice = "${entry.name} prêt à être copié. Ouvre le dossier cible puis appuie sur Coller." },
                             onMove = { remoteClipboard = RemoteClipboard(entry, move = true); notice = "${entry.name} prêt à être déplacé. Ouvre le dossier cible puis appuie sur Coller." },
+                            onPreview = { previewRemoteFile(entry) },
                         )
                     }
                 }
@@ -388,6 +433,7 @@ private fun PocketFtpScreen() {
                             onUpload = { uploadLocalFile(file) },
                             onRename = { renameRequest = RenameRequest(local = file); renameText = file.name ?: "" },
                             onDelete = { deleteRequest = DeleteRequest(local = file) },
+                            onPreview = { previewLocalFile(file) },
                         )
                     }
                 }
@@ -482,6 +528,12 @@ private fun PocketFtpScreen() {
             dismissButton = { TextButton(onClick = { deleteRequest = null }) { Text("Annuler") } }
         )
     }
+
+    previewDocument?.let { preview ->
+        FilePreviewDialog(file = preview.file, name = preview.name) {
+            previewDocument = null
+        }
+    }
 }
 
 @Composable
@@ -501,7 +553,7 @@ private fun ExplorerToolbar(
 private fun RemoteFileRow(
     entry: RemoteEntry, busy: Boolean,
     onOpen: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit, onDownload: () -> Unit,
-    onCopy: () -> Unit, onMove: () -> Unit
+    onCopy: () -> Unit, onMove: () -> Unit, onPreview: () -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
     Row(
@@ -521,6 +573,9 @@ private fun RemoteFileRow(
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 if (!entry.isDirectory) DropdownMenuItem(text = { Text("Télécharger") },
                     onClick = { expanded = false; onDownload() }, leadingIcon = { Icon(Icons.Default.CloudDownload, null) })
+                if (!entry.isDirectory && isInlinePreviewable(entry.name)) DropdownMenuItem(
+                    text = { Text("Aperçu") }, onClick = { expanded = false; onPreview() }
+                )
                 DropdownMenuItem(text = { Text("Copier") }, onClick = { expanded = false; onCopy() })
                 DropdownMenuItem(text = { Text("Déplacer") }, onClick = { expanded = false; onMove() })
                 DropdownMenuItem(text = { Text("Renommer") }, onClick = { expanded = false; onRename() },
@@ -536,7 +591,8 @@ private fun RemoteFileRow(
 @Composable
 private fun LocalFileRow(
     file: DocumentFile, busy: Boolean, canUpload: Boolean,
-    onOpen: () -> Unit, onUpload: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit
+    onOpen: () -> Unit, onUpload: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit,
+    onPreview: () -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
     Row(
@@ -556,6 +612,9 @@ private fun LocalFileRow(
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 if (canUpload && file.isFile) DropdownMenuItem(text = { Text("Envoyer sur le serveur") },
                     onClick = { expanded = false; onUpload() }, leadingIcon = { Icon(Icons.Default.CloudUpload, null) })
+                if (file.isFile && isInlinePreviewable(file.name ?: "")) DropdownMenuItem(
+                    text = { Text("Aperçu") }, onClick = { expanded = false; onPreview() }
+                )
                 DropdownMenuItem(text = { Text("Renommer") }, onClick = { expanded = false; onRename() },
                     leadingIcon = { Icon(Icons.Default.Edit, null) })
                 DropdownMenuItem(text = { Text("Supprimer") }, onClick = { expanded = false; onDelete() },
@@ -571,4 +630,12 @@ private fun readableSize(size: Long): String = when {
     size < 1_048_576 -> "%.1f Ko".format(size / 1_024.0)
     size < 1_073_741_824 -> "%.1f Mo".format(size / 1_048_576.0)
     else -> "%.1f Go".format(size / 1_073_741_824.0)
+}
+
+private fun isInlinePreviewable(name: String): Boolean =
+    name.substringAfterLast('.', "").lowercase() in setOf("png", "jpg", "jpeg", "webp", "bmp", "gif", "pdf")
+
+private fun createPreviewTempFile(cacheDirectory: File, name: String): File {
+    val extension = name.substringAfterLast('.', "").lowercase().filter(Char::isLetterOrDigit).take(8)
+    return File.createTempFile("pocketftp-preview-", if (extension.isEmpty()) ".tmp" else ".$extension", cacheDirectory)
 }
