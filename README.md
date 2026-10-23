@@ -1,4 +1,4 @@
-# PocketFTP 0.3 — aperçus intégrés
+# PocketFTP 0.4 — transferts entre téléphone et serveur
 
 Projet **Android natif Kotlin / Jetpack Compose**, en français.
 
@@ -11,6 +11,9 @@ Projet **Android natif Kotlin / Jetpack Compose**, en français.
 - Téléchargement d'un fichier distant dans un emplacement choisi (sélecteur Android).
 - Création, renommage et suppression de fichiers et dossiers (les dossiers FTP doivent être vides pour être supprimés).
 - Copie récursive et déplacement de fichiers et dossiers sur le serveur FTP/FTPS, avec un bouton « Coller » dans le dossier cible.
+- Copier/couper/coller des fichiers et dossiers entre les dossiers autorisés du téléphone et le serveur, dans les deux sens ; copie locale également disponible.
+- Les dossiers sont copiés récursivement. Les déplacements entre téléphone et serveur suppriment la source après la copie réussie.
+- Les noms déjà présents dans le dossier cible provoquent une erreur explicite ; aucun élément n'est écrasé silencieusement.
 - Aperçu intégré des images PNG, JPEG, WebP, BMP et GIF, ainsi que des PDF, depuis les dossiers locaux ou distants.
 - Lecture PDF page par page ; les images trop grandes sont décodées à une résolution adaptée à l'écran.
 - Accès à un dossier local autorisé via le sélecteur de dossiers Android ; ouverture locale via les applications installées.
@@ -18,11 +21,10 @@ Projet **Android natif Kotlin / Jetpack Compose**, en français.
 - Pas de stockage des mots de passe ; mot de passe effacé après connexion.
 - Pas d'écrasement silencieux lors d'un envoi : si le fichier existe, l'opération échoue explicitement.
 
-## Pas encore disponibles (étapes suivantes)
+## Pas encore disponibles
 
 - SFTP (protocole différent de FTP/FTPS) et profils sauvegardés.
-- Copier/couper/coller entre le téléphone et le serveur ; gestion d'un presse-papiers local et sélection multiple.
-- Copier/couper/coller entre le téléphone et le serveur ; presse-papiers local et sélection multiple.
+- Sélection multiple et presse-papiers persistant après fermeture de l'application.
 - Éditeur de texte/code.
 - Progression détaillée, interruption/reprise de transfert et transferts de fond.
 - Choix Remplacer/Ignorer/Renommer pour les conflits.
@@ -34,7 +36,7 @@ Projet **Android natif Kotlin / Jetpack Compose**, en français.
 3. Dans le dépôt GitHub, ajouter **tout le contenu intérieur** du dossier, y compris le dossier caché `.github`. La racine du dépôt doit contenir `app/`, `build.gradle.kts`, `settings.gradle.kts` et `.github/`.
 4. Commit des fichiers sur la branche `main`.
 5. Ouvrir **Actions** → **Compiler PocketFTP APK** (accepter l'activation des Actions si GitHub le demande).
-6. À la fin de l'exécution réussie, télécharger l'artefact `PocketFTP-0.3-APK`.
+6. À la fin de l'exécution réussie, télécharger l'artefact `PocketFTP-0.4-APK`.
 7. Décompresser cet artefact : il contient `app-debug.apk`.
 8. Transférer l'APK sur le téléphone, l'ouvrir, autoriser l'installation pour cette source Android si nécessaire, puis installer.
 

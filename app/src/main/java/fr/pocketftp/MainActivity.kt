@@ -62,7 +62,13 @@ private data class DeleteRequest(
     val local: DocumentFile? = null,
 )
 
-private data class RemoteClipboard(val entry: RemoteEntry, val move: Boolean)
+private data class TransferClipboard(
+    val remote: RemoteEntry? = null,
+    val local: DocumentFile? = null,
+    val move: Boolean,
+) {
+    val name: String get() = remote?.name ?: local?.name ?: "élément"
+}
 private data class PreviewDocument(val file: File, val name: String)
 
 @Composable
@@ -96,7 +102,7 @@ private fun PocketFtpScreen() {
     var createDirectoryDialog by remember { mutableStateOf(false) }
     var directoryName by remember { mutableStateOf("") }
     var pendingDownload by remember { mutableStateOf<RemoteEntry?>(null) }
-    var remoteClipboard by remember { mutableStateOf<RemoteClipboard?>(null) }
+    var transferClipboard by remember { mutableStateOf<TransferClipboard?>(null) }
     var previewDocument by remember { mutableStateOf<PreviewDocument?>(null) }
 
     DisposableEffect(previewDocument) {
@@ -253,7 +259,7 @@ private fun PocketFtpScreen() {
             Text("PocketFTP", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
             if (busy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-            else Text("v0.3", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            else Text("v0.4", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Spacer(Modifier.height(12.dp))
         TabRow(selectedTabIndex = tab) {
@@ -323,7 +329,7 @@ private fun PocketFtpScreen() {
                                 repository = connected
                                 currentRemotePath = connected.initialDirectory
                                 remoteEntries = files
-                                remoteClipboard = null
+                                if (transferClipboard?.remote != null) transferClipboard = null
                                 // Le mot de passe n'est jamais sauvegardé dans cette version.
                                 password = ""
                                 notice = "Connexion établie."
@@ -346,7 +352,7 @@ private fun PocketFtpScreen() {
                     TextButton(enabled = !busy, onClick = {
                         repository = null
                         remoteEntries = emptyList()
-                        remoteClipboard = null
+                        if (transferClipboard?.remote != null) transferClipboard = null
                         password = ""
                         scope.launch(Dispatchers.IO) { session.close() }
                     }) { Text("Quitter") }
@@ -368,7 +374,7 @@ private fun PocketFtpScreen() {
                         onClick = { directoryName = ""; createDirectoryDialog = true }
                     ) { Icon(Icons.Default.CreateNewFolder, null); Spacer(Modifier.width(4.dp)); Text("Dossier") }
                 }
-                remoteClipboard?.let { clipboard ->
+                transferClipboard?.let { clipboard ->
                     Spacer(Modifier.height(6.dp))
                     FilledTonalButton(
                         modifier = Modifier.fillMaxWidth(), enabled = !busy,
@@ -377,15 +383,23 @@ private fun PocketFtpScreen() {
                             val destination = currentRemotePath
                             runTask {
                                 withContext(Dispatchers.IO) {
-                                    if (clipboard.move) sessionForPaste.move(clipboard.entry, destination)
-                                    else sessionForPaste.copy(clipboard.entry, destination, context.cacheDir)
+                                    when {
+                                        clipboard.remote != null -> {
+                                            if (clipboard.move) sessionForPaste.move(clipboard.remote, destination)
+                                            else sessionForPaste.copy(clipboard.remote, destination, context.cacheDir)
+                                        }
+                                        clipboard.local != null -> {
+                                            copyLocalToRemote(context, clipboard.local, destination, sessionForPaste)
+                                            if (clipboard.move) deleteLocalTree(clipboard.local)
+                                        }
+                                    }
                                 }
                                 remoteEntries = withContext(Dispatchers.IO) { sessionForPaste.list(destination) }
-                                if (clipboard.move) remoteClipboard = null
+                                if (clipboard.move) transferClipboard = null
                                 notice = if (clipboard.move) "Déplacement terminé." else "Copie terminée."
                             }
                         }
-                    ) { Text("Coller ${if (clipboard.move) "(déplacer)" else "(copier)"} : ${clipboard.entry.name}") }
+                    ) { Text("Coller ici : ${clipboard.name}") }
                 }
                 HorizontalDivider()
                 LazyColumn(modifier = Modifier.weight(1f)) {
@@ -399,8 +413,8 @@ private fun PocketFtpScreen() {
                             onRename = { renameRequest = RenameRequest(remote = entry); renameText = entry.name },
                             onDelete = { deleteRequest = DeleteRequest(remote = entry) },
                             onDownload = { pendingDownload = entry; chooseDownloadDestination.launch(entry.name) },
-                            onCopy = { remoteClipboard = RemoteClipboard(entry, move = false); notice = "${entry.name} prêt à être copié. Ouvre le dossier cible puis appuie sur Coller." },
-                            onMove = { remoteClipboard = RemoteClipboard(entry, move = true); notice = "${entry.name} prêt à être déplacé. Ouvre le dossier cible puis appuie sur Coller." },
+                            onCopy = { transferClipboard = TransferClipboard(remote = entry, move = false); notice = "${entry.name} prêt à être copié. Choisis le dossier cible et appuie sur Coller." },
+                            onMove = { transferClipboard = TransferClipboard(remote = entry, move = true); notice = "${entry.name} prêt à être déplacé. Choisis le dossier cible et appuie sur Coller." },
                             onPreview = { previewRemoteFile(entry) },
                         )
                     }
@@ -424,6 +438,34 @@ private fun PocketFtpScreen() {
                     onBack = { localStack = localStack.dropLast(1) },
                     onRefresh = { localRevision++ }
                 )
+                transferClipboard?.let { clipboard ->
+                    Spacer(Modifier.height(6.dp))
+                    FilledTonalButton(
+                        modifier = Modifier.fillMaxWidth(), enabled = !busy && (clipboard.remote == null || repository != null),
+                        onClick = {
+                            val target = localStack.lastOrNull() ?: return@FilledTonalButton
+                            val sessionForPaste = repository
+                            runTask {
+                                withContext(Dispatchers.IO) {
+                                    when {
+                                        clipboard.remote != null -> {
+                                            val session = sessionForPaste ?: error("Connecte-toi au serveur d'abord.")
+                                            copyRemoteToLocal(context, session, clipboard.remote, target)
+                                            if (clipboard.move) session.deleteRecursively(clipboard.remote)
+                                        }
+                                        clipboard.local != null -> {
+                                            copyLocalToLocal(context, clipboard.local, target)
+                                            if (clipboard.move) deleteLocalTree(clipboard.local)
+                                        }
+                                    }
+                                }
+                                localRevision++
+                                if (clipboard.move) transferClipboard = null
+                                notice = if (clipboard.move) "Déplacement terminé." else "Copie terminée."
+                            }
+                        }
+                    ) { Text("Coller ici : ${clipboard.name}") }
+                }
                 HorizontalDivider()
                 LazyColumn(modifier = Modifier.weight(1f)) {
                     items(localEntries, key = { it.uri.toString() }) { file ->
@@ -434,6 +476,8 @@ private fun PocketFtpScreen() {
                             onRename = { renameRequest = RenameRequest(local = file); renameText = file.name ?: "" },
                             onDelete = { deleteRequest = DeleteRequest(local = file) },
                             onPreview = { previewLocalFile(file) },
+                            onCopy = { transferClipboard = TransferClipboard(local = file, move = false); notice = "${file.name} prêt à être copié. Choisis le dossier cible et appuie sur Coller." },
+                            onMove = { transferClipboard = TransferClipboard(local = file, move = true); notice = "${file.name} prêt à être déplacé. Choisis le dossier cible et appuie sur Coller." },
                         )
                     }
                 }
@@ -577,7 +621,7 @@ private fun RemoteFileRow(
                     text = { Text("Aperçu") }, onClick = { expanded = false; onPreview() }
                 )
                 DropdownMenuItem(text = { Text("Copier") }, onClick = { expanded = false; onCopy() })
-                DropdownMenuItem(text = { Text("Déplacer") }, onClick = { expanded = false; onMove() })
+                DropdownMenuItem(text = { Text("Couper") }, onClick = { expanded = false; onMove() })
                 DropdownMenuItem(text = { Text("Renommer") }, onClick = { expanded = false; onRename() },
                     leadingIcon = { Icon(Icons.Default.Edit, null) })
                 DropdownMenuItem(text = { Text("Supprimer") }, onClick = { expanded = false; onDelete() },
@@ -592,7 +636,7 @@ private fun RemoteFileRow(
 private fun LocalFileRow(
     file: DocumentFile, busy: Boolean, canUpload: Boolean,
     onOpen: () -> Unit, onUpload: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit,
-    onPreview: () -> Unit
+    onPreview: () -> Unit, onCopy: () -> Unit, onMove: () -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
     Row(
@@ -615,6 +659,8 @@ private fun LocalFileRow(
                 if (file.isFile && isInlinePreviewable(file.name ?: "")) DropdownMenuItem(
                     text = { Text("Aperçu") }, onClick = { expanded = false; onPreview() }
                 )
+                DropdownMenuItem(text = { Text("Copier") }, onClick = { expanded = false; onCopy() })
+                DropdownMenuItem(text = { Text("Couper") }, onClick = { expanded = false; onMove() })
                 DropdownMenuItem(text = { Text("Renommer") }, onClick = { expanded = false; onRename() },
                     leadingIcon = { Icon(Icons.Default.Edit, null) })
                 DropdownMenuItem(text = { Text("Supprimer") }, onClick = { expanded = false; onDelete() },

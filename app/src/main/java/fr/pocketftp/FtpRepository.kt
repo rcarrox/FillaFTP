@@ -149,6 +149,12 @@ class FtpRepository private constructor(
         check(ok) { "Suppression refusée (dossier non vide ?) : ${client.replyString.trim()}" }
     }
 
+    /** Suppression récursive utilisée après une copie terminée lors d'un déplacement inter-espace. */
+    @Synchronized
+    fun deleteRecursively(entry: RemoteEntry) {
+        deleteNode(entry.path, entry.isDirectory)
+    }
+
     @Synchronized
     fun upload(destinationDir: String, name: String, input: InputStream) {
         val target = RemotePaths.child(destinationDir, name)
@@ -220,6 +226,15 @@ class FtpRepository private constructor(
             .filterNot { it.isDirectory }
             .forEach { client.deleteFile(RemotePaths.child(path, it.name)) }
         client.removeDirectory(path)
+    }
+
+    private fun deleteNode(path: String, isDirectory: Boolean) {
+        if (!isDirectory) {
+            check(client.deleteFile(path)) { "Suppression refusée : ${client.replyString.trim()}" }
+            return
+        }
+        for (child in list(path)) deleteNode(child.path, child.isDirectory)
+        check(client.removeDirectory(path)) { "Suppression du dossier refusée : ${client.replyString.trim()}" }
     }
 
     private fun isSameOrDescendant(candidate: String, directory: String): Boolean {
