@@ -1,4 +1,4 @@
-# PocketFTP 0.1 — première version de test
+# PocketFTP 0.2 — copie et déplacement côté serveur
 
 Projet **Android natif Kotlin / Jetpack Compose**, en français.
 
@@ -10,6 +10,7 @@ Projet **Android natif Kotlin / Jetpack Compose**, en français.
 - Envoi d'un ou plusieurs fichiers du téléphone (sélecteur Android) vers le dossier FTP affiché.
 - Téléchargement d'un fichier distant dans un emplacement choisi (sélecteur Android).
 - Création, renommage et suppression de fichiers et dossiers (les dossiers FTP doivent être vides pour être supprimés).
+- Copie récursive et déplacement de fichiers et dossiers sur le serveur FTP/FTPS, avec un bouton « Coller » dans le dossier cible.
 - Accès à un dossier local autorisé via le sélecteur de dossiers Android ; ouverture locale via les applications installées.
 - Pas de permission d'accès à l'ensemble du stockage.
 - Pas de stockage des mots de passe ; mot de passe effacé après connexion.
@@ -18,7 +19,7 @@ Projet **Android natif Kotlin / Jetpack Compose**, en français.
 ## Pas encore disponibles (étapes suivantes)
 
 - SFTP (protocole différent de FTP/FTPS) et profils sauvegardés.
-- Copier/couper/coller/déplacer, sélection multiple, duplication de dossiers.
+- Copier/couper/coller entre le téléphone et le serveur ; gestion d'un presse-papiers local et sélection multiple.
 - Prévisualisation intégrée des images et des PDF ; éditeur de texte/code.
 - Progression détaillée, interruption/reprise de transfert et transferts de fond.
 - Choix Remplacer/Ignorer/Renommer pour les conflits.
@@ -26,11 +27,11 @@ Projet **Android natif Kotlin / Jetpack Compose**, en français.
 ## Méthode A : générer l'APK sans Android Studio (GitHub)
 
 1. Créer un nouveau dépôt GitHub, par exemple `PocketFTP`, **privé** de préférence.
-2. Décompresser `PocketFTP-0.1-source.zip` sur un ordinateur.
+2. Décompresser l'archive source sur un ordinateur.
 3. Dans le dépôt GitHub, ajouter **tout le contenu intérieur** du dossier, y compris le dossier caché `.github`. La racine du dépôt doit contenir `app/`, `build.gradle.kts`, `settings.gradle.kts` et `.github/`.
 4. Commit des fichiers sur la branche `main`.
 5. Ouvrir **Actions** → **Compiler PocketFTP APK** (accepter l'activation des Actions si GitHub le demande).
-6. À la fin de l'exécution réussie, télécharger l'artefact `PocketFTP-0.1-APK`.
+6. À la fin de l'exécution réussie, télécharger l'artefact `PocketFTP-0.2-APK`.
 7. Décompresser cet artefact : il contient `app-debug.apk`.
 8. Transférer l'APK sur le téléphone, l'ouvrir, autoriser l'installation pour cette source Android si nécessaire, puis installer.
 
@@ -60,6 +61,6 @@ Ne pas tester une suppression sur un dossier de production. La connexion FTP bas
 - Les identifiants de connexion sont uniquement gardés en mémoire pendant l'utilisation de l'écran de connexion, puis le mot de passe est effacé de l'état à la connexion réussie.
 - Un compte FTP/FTPS dédié, avec permissions limitées, est fortement recommandé.
 - FTPS utilise une validation TLS stricte : les certificats invalides/autosignés peuvent être refusés.
-- Les transferts se font pendant que l'application est ouverte ; le système peut les interrompre en arrière-plan.
+- Les transferts se font pendant que l'application est ouverte ; le système peut les interrompre en arrière-plan. La copie distante utilise temporairement le stockage de l'application et peut nécessiter un espace égal à la taille du plus gros fichier copié.
 - Une suppression locale via l'interface Android peut effacer récursivement un dossier : bien lire la confirmation.
-- Aucun SDK Android ni service externe n'était accessible dans l'environnement de génération de ce projet : **le code n'a pas été compilé ni exécuté sur téléphone ici**. La workflow GitHub fournit la vérification compilatoire et les tests.
+- La compilation et les tests unitaires sont exécutés par le workflow GitHub Actions. L'application n'a pas encore été testée sur un téléphone réel.

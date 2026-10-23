@@ -19,4 +19,8 @@ class RemotePathsTest {
         assertEquals("/", RemotePaths.parent("/a"))
         assertEquals("/", RemotePaths.parent("/"))
     }
+    @Test fun nameReturnsFinalPathSegment() {
+        assertEquals("photo.png", RemotePaths.name("/a/b/photo.png"))
+        assertEquals("/", RemotePaths.name("/"))
+    }
 }

@@ -209,7 +209,7 @@ private fun PocketFtpScreen() {
             Text("PocketFTP", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
             if (busy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-            else Text("v0.1", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            else Text("v0.2", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Spacer(Modifier.height(12.dp))
         TabRow(selectedTabIndex = tab) {
