@@ -101,6 +101,46 @@ internal class ConnectionProfileStore(context: Context) {
         }
     }
 
+    @Synchronized
+    fun hostKeyPin(host: String, port: Int): String? = hostKeyPins()[hostKey(host, port)]
+
+    @Synchronized
+    fun saveHostKeyPin(host: String, port: Int, fingerprint: String) {
+        val pins = hostKeyPins().toMutableMap()
+        pins[hostKey(host, port)] = fingerprint
+        val json = JSONObject()
+        pins.forEach { (key, value) -> json.put(key, value) }
+        check(preferences.edit().putString(HOST_KEYS_KEY, encrypt(json.toString())).commit()) {
+            "Impossible d'enregistrer l'empreinte SFTP."
+        }
+    }
+
+    @Synchronized
+    fun removeHostKeyPin(host: String, port: Int) {
+        val pins = hostKeyPins().toMutableMap()
+        pins.remove(hostKey(host, port))
+        if (pins.isEmpty()) {
+            check(preferences.edit().remove(HOST_KEYS_KEY).commit()) { "Impossible de supprimer l'empreinte SFTP." }
+        } else {
+            val json = JSONObject()
+            pins.forEach { (key, value) -> json.put(key, value) }
+            check(preferences.edit().putString(HOST_KEYS_KEY, encrypt(json.toString())).commit()) {
+                "Impossible de mettre à jour les empreintes SFTP."
+            }
+        }
+    }
+
+    private fun hostKeyPins(): Map<String, String> {
+        val encrypted = preferences.getString(HOST_KEYS_KEY, null) ?: return emptyMap()
+        val cleartext = try { decrypt(encrypted) }
+        catch (e: Exception) { throw IllegalStateException("Impossible de déchiffrer les empreintes SFTP.", e) }
+        val json = try { JSONObject(cleartext) }
+        catch (e: Exception) { throw IllegalStateException("Les empreintes SFTP enregistrées sont illisibles.", e) }
+        return json.keys().asSequence().associateWith { json.getString(it) }
+    }
+
+    private fun hostKey(host: String, port: Int) = "${host.trim().lowercase()}:$port"
+
     private fun encrypt(plaintext: String): String {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
@@ -140,6 +180,7 @@ internal class ConnectionProfileStore(context: Context) {
 
     private companion object {
         const val PROFILES_KEY = "encrypted_profiles"
+        const val HOST_KEYS_KEY = "encrypted_host_keys"
         const val KEY_ALIAS = "pocketftp_connection_profiles"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
     }

@@ -15,7 +15,7 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.time.Duration
 
-enum class ConnectionMode { FTP, FTPS }
+enum class ConnectionMode { FTP, FTPS, SFTP }
 
 data class RemoteEntry(
     val name: String,
@@ -24,11 +24,25 @@ data class RemoteEntry(
     val sizeBytes: Long,
 )
 
+/** Séance distante commune aux protocoles pris en charge par l'explorateur. */
+interface RemoteFileSession : Closeable {
+    val initialDirectory: String
+    fun list(path: String): List<RemoteEntry>
+    fun createDirectory(parent: String, name: String)
+    fun rename(entry: RemoteEntry, newName: String)
+    fun move(entry: RemoteEntry, destinationDirectory: String)
+    fun copy(entry: RemoteEntry, destinationDirectory: String, temporaryDirectory: File)
+    fun delete(entry: RemoteEntry)
+    fun deleteRecursively(entry: RemoteEntry)
+    fun upload(destinationDir: String, name: String, input: InputStream)
+    fun download(entry: RemoteEntry, output: OutputStream)
+}
+
 /** Une session FTP séquentielle : toutes les méthodes réseau doivent s'exécuter sur Dispatchers.IO. */
 class FtpRepository private constructor(
     private val client: FTPClient,
-    val initialDirectory: String,
-) : Closeable {
+    override val initialDirectory: String,
+) : RemoteFileSession {
     companion object {
         fun connect(mode: ConnectionMode, host: String, port: Int, user: String, password: String): FtpRepository {
             require(host.isNotBlank()) { "Indique l'adresse du serveur." }
@@ -70,7 +84,7 @@ class FtpRepository private constructor(
     }
 
     @Synchronized
-    fun list(path: String): List<RemoteEntry> {
+    override fun list(path: String): List<RemoteEntry> {
         val directory = RemotePaths.normalize(path)
         val files = client.listFiles(directory)
             ?: error("Impossible de lire $directory : ${client.replyString.trim()}")
@@ -87,14 +101,14 @@ class FtpRepository private constructor(
     }
 
     @Synchronized
-    fun createDirectory(parent: String, name: String) {
+    override fun createDirectory(parent: String, name: String) {
         val path = RemotePaths.child(parent, name)
         require(!exists(parent, name)) { "Un élément porte déjà ce nom." }
         check(client.makeDirectory(path)) { "Création refusée : ${client.replyString.trim()}" }
     }
 
     @Synchronized
-    fun rename(entry: RemoteEntry, newName: String) {
+    override fun rename(entry: RemoteEntry, newName: String) {
         val parent = RemotePaths.parent(entry.path)
         val destination = RemotePaths.child(parent, newName)
         if (destination == entry.path) return
@@ -104,7 +118,7 @@ class FtpRepository private constructor(
 
     /** Déplace un élément sur le même serveur FTP. Le renommage FTP peut aussi changer son dossier parent. */
     @Synchronized
-    fun move(entry: RemoteEntry, destinationDirectory: String) {
+    override fun move(entry: RemoteEntry, destinationDirectory: String) {
         val destination = RemotePaths.child(destinationDirectory, entry.name)
         if (destination == entry.path) return
         if (entry.isDirectory) {
@@ -118,7 +132,7 @@ class FtpRepository private constructor(
 
     /** Copie récursivement un fichier ou un dossier sur le même serveur FTP. */
     @Synchronized
-    fun copy(entry: RemoteEntry, destinationDirectory: String, temporaryDirectory: File) {
+    override fun copy(entry: RemoteEntry, destinationDirectory: String, temporaryDirectory: File) {
         val destination = RemotePaths.child(destinationDirectory, entry.name)
         if (entry.isDirectory) {
             require(!isSameOrDescendant(destination, entry.path)) {
@@ -144,19 +158,19 @@ class FtpRepository private constructor(
     }
 
     @Synchronized
-    fun delete(entry: RemoteEntry) {
+    override fun delete(entry: RemoteEntry) {
         val ok = if (entry.isDirectory) client.removeDirectory(entry.path) else client.deleteFile(entry.path)
         check(ok) { "Suppression refusée (dossier non vide ?) : ${client.replyString.trim()}" }
     }
 
     /** Suppression récursive utilisée après une copie terminée lors d'un déplacement inter-espace. */
     @Synchronized
-    fun deleteRecursively(entry: RemoteEntry) {
+    override fun deleteRecursively(entry: RemoteEntry) {
         deleteNode(entry.path, entry.isDirectory)
     }
 
     @Synchronized
-    fun upload(destinationDir: String, name: String, input: InputStream) {
+    override fun upload(destinationDir: String, name: String, input: InputStream) {
         val target = RemotePaths.child(destinationDir, name)
         require(!exists(destinationDir, name)) { "Le fichier $name existe déjà : envoi annulé." }
         // Upload vers un nom provisoire : ne pas laisser le nom final en cas d'échec.
@@ -173,7 +187,7 @@ class FtpRepository private constructor(
     }
 
     @Synchronized
-    fun download(entry: RemoteEntry, output: OutputStream) {
+    override fun download(entry: RemoteEntry, output: OutputStream) {
         require(!entry.isDirectory) { "Le téléchargement d'un dossier sera ajouté à l'étape 2." }
         check(client.retrieveFile(entry.path, output)) { "Téléchargement échoué : ${client.replyString.trim()}" }
     }

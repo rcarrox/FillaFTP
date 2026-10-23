@@ -12,8 +12,8 @@ android {
         applicationId = "fr.pocketftp"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.5"
+        versionCode = 6
+        versionName = "0.6"
     }
     buildTypes {
         release {
@@ -43,5 +43,6 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("commons-net:commons-net:3.11.1")
+    implementation("com.hierynomus:sshj:0.40.0")
     testImplementation("junit:junit:4.13.2")
 }

@@ -72,6 +72,7 @@ private data class TransferClipboard(
     val name: String get() = remote?.name ?: local?.name ?: "élément"
 }
 private data class PreviewDocument(val file: File, val name: String)
+private data class PendingHostKey(val host: String, val port: Int, val fingerprint: String)
 
 @Composable
 private fun PocketFtpScreen() {
@@ -87,7 +88,10 @@ private fun PocketFtpScreen() {
     var user by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var mode by remember { mutableStateOf(ConnectionMode.FTPS) }
-    var repository by remember { mutableStateOf<FtpRepository?>(null) }
+    var repository by remember { mutableStateOf<RemoteFileSession?>(null) }
+    var pendingHostKey by remember { mutableStateOf<PendingHostKey?>(null) }
+    var pinnedHostKeyExists by remember { mutableStateOf(false) }
+    var resetHostKeyDialog by remember { mutableStateOf(false) }
     // Fermer proprement l'ancienne connexion quand l'activité est détruite/recréée.
     DisposableEffect(repository) {
         val active = repository
@@ -120,6 +124,13 @@ private fun PocketFtpScreen() {
         catch (e: Exception) { notice = e.localizedMessage ?: "Profils enregistrés illisibles." }
     }
 
+    LaunchedEffect(host, port, mode, profileStore) {
+        pinnedHostKeyExists = if (mode == ConnectionMode.SFTP) withContext(Dispatchers.IO) {
+            val parsedPort = port.toIntOrNull() ?: 0
+            parsedPort in 1..65535 && profileStore.hostKeyPin(host, parsedPort) != null
+        } else false
+    }
+
     DisposableEffect(previewDocument) {
         val file = previewDocument?.file
         onDispose { file?.delete() }
@@ -131,8 +142,44 @@ private fun PocketFtpScreen() {
             busy = true
             notice = ""
             try { action() }
+            catch (e: UnknownSftpHostKeyException) {
+                pendingHostKey = PendingHostKey(host.trim(), port.toIntOrNull() ?: 22, e.fingerprint)
+                notice = "Compare l'empreinte SFTP avec une source fiable avant de l'enregistrer."
+            }
             catch (e: Exception) { notice = e.localizedMessage ?: "Opération impossible." }
             finally { busy = false }
+        }
+    }
+
+    suspend fun connectToServer(
+        store: ConnectionProfileStore,
+        selectedMode: ConnectionMode,
+        selectedHost: String,
+        selectedPort: Int,
+        selectedUser: String,
+        selectedPassword: String,
+        verifiedFingerprint: String? = null,
+    ) {
+        val connected = withContext(Dispatchers.IO) {
+            if (selectedMode == ConnectionMode.SFTP) {
+                val pin = verifiedFingerprint ?: store.hostKeyPin(selectedHost, selectedPort)
+                SftpRepository.connect(selectedHost, selectedPort, selectedUser, selectedPassword, pin)
+            } else {
+                FtpRepository.connect(selectedMode, selectedHost, selectedPort, selectedUser, selectedPassword)
+            }
+        }
+        try {
+            val files = withContext(Dispatchers.IO) { connected.list(connected.initialDirectory) }
+            repository = connected
+            currentRemotePath = connected.initialDirectory
+            remoteEntries = files
+            if (transferClipboard?.remote != null) transferClipboard = null
+            password = ""
+            pinnedHostKeyExists = selectedMode == ConnectionMode.SFTP
+            notice = "Connexion établie."
+        } catch (e: Exception) {
+            withContext(Dispatchers.IO) { connected.close() }
+            throw e
         }
     }
 
@@ -283,7 +330,7 @@ private fun PocketFtpScreen() {
             Text("PocketFTP", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
             if (busy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-            else Text("v0.5", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            else Text("v0.6", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Spacer(Modifier.height(12.dp))
         TabRow(selectedTabIndex = tab) {
@@ -329,10 +376,16 @@ private fun PocketFtpScreen() {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(selected = mode == ConnectionMode.FTPS, onClick = {
                         mode = ConnectionMode.FTPS
+                        if (port == "22") port = "21"
                     }, label = { Text("FTPS sécurisé") })
                     FilterChip(selected = mode == ConnectionMode.FTP, onClick = {
                         mode = ConnectionMode.FTP
+                        if (port == "22") port = "21"
                     }, label = { Text("FTP") })
+                    FilterChip(selected = mode == ConnectionMode.SFTP, onClick = {
+                        mode = ConnectionMode.SFTP
+                        if (port == "21") port = "22"
+                    }, label = { Text("SFTP sécurisé") })
                 }
                 if (mode == ConnectionMode.FTP) {
                     Text(
@@ -340,6 +393,16 @@ private fun PocketFtpScreen() {
                         color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodySmall
                     )
+                }
+                if (mode == ConnectionMode.SFTP) {
+                    Text(
+                        "La clé est contrôlée avant l'envoi du mot de passe. Compare l'empreinte initiale avec une source indépendante.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    if (pinnedHostKeyExists) TextButton(onClick = { resetHostKeyDialog = true }) {
+                        Text("Oublier l'empreinte enregistrée")
+                    }
                 }
                 OutlinedTextField(
                     port, { port = it.filter(Char::isDigit).take(5) },
@@ -368,28 +431,15 @@ private fun PocketFtpScreen() {
                         val selectedPassword = password
                         val selectedPort = port.toIntOrNull() ?: 0
                         runTask {
-                            val connected = withContext(Dispatchers.IO) {
-                                FtpRepository.connect(selectedMode, selectedHost, selectedPort, selectedUser, selectedPassword)
-                            }
-                            try {
-                                val files = withContext(Dispatchers.IO) { connected.list(connected.initialDirectory) }
-                                repository = connected
-                                currentRemotePath = connected.initialDirectory
-                                remoteEntries = files
-                                if (transferClipboard?.remote != null) transferClipboard = null
-                                // Effacer le mot de passe du formulaire après la connexion.
-                                password = ""
-                                notice = "Connexion établie."
-                            } catch (e: Exception) {
-                                withContext(Dispatchers.IO) { connected.close() }
-                                throw e
-                            }
+                            connectToServer(profileStore, selectedMode, selectedHost, selectedPort, selectedUser, selectedPassword)
                         }
                     }
                 ) { Text("Se connecter") }
                 Spacer(Modifier.height(12.dp))
                 Text(
-                    "Cette première version prend en charge FTP et FTPS explicite. SFTP sera ajouté avec une vérification de clé d'hôte.",
+                    if (mode == ConnectionMode.SFTP)
+                        "À la première connexion SFTP, compare l'empreinte affichée avec celle fournie par l'administrateur. Une clé modifiée est bloquée."
+                    else "FTP, FTPS explicite et SFTP sont pris en charge. SFTP vérifie et mémorise l'empreinte du serveur.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -555,6 +605,59 @@ private fun PocketFtpScreen() {
                 }) { Text("Créer") }
             },
             dismissButton = { TextButton(onClick = { createDirectoryDialog = false }) { Text("Annuler") } }
+        )
+    }
+
+    pendingHostKey?.let { pending ->
+        AlertDialog(
+            onDismissRequest = { pendingHostKey = null },
+            title = { Text("Vérifier la clé du serveur SFTP") },
+            text = {
+                Column {
+                    Text("Serveur : ${pending.host}:${pending.port}")
+                    Spacer(Modifier.height(8.dp))
+                    Text("Empreinte SHA-256 :")
+                    Text(pending.fingerprint, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(8.dp))
+                    Text("Compare cette empreinte à celle communiquée par l'administrateur du serveur ou publiée par un canal indépendant. Si tu ne peux pas la vérifier, annule.")
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingHostKey = null
+                    val selectedMode = ConnectionMode.SFTP
+                    val selectedUser = user
+                    val selectedPassword = password
+                    runTask {
+                        withContext(Dispatchers.IO) {
+                            profileStore.saveHostKeyPin(pending.host, pending.port, pending.fingerprint)
+                        }
+                        connectToServer(profileStore, selectedMode, pending.host, pending.port, selectedUser, selectedPassword, pending.fingerprint)
+                    }
+                }) { Text("Empreinte vérifiée, enregistrer") }
+            },
+            dismissButton = { TextButton(onClick = { pendingHostKey = null }) { Text("Annuler") } },
+        )
+    }
+
+    if (resetHostKeyDialog) {
+        AlertDialog(
+            onDismissRequest = { resetHostKeyDialog = false },
+            title = { Text("Oublier cette clé SFTP ?") },
+            text = { Text("La prochaine connexion à ${host.trim()}:${port} affichera une nouvelle empreinte à vérifier. Fais-le seulement après avoir confirmé le changement de clé auprès de l'administrateur.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    resetHostKeyDialog = false
+                    val endpointHost = host.trim()
+                    val endpointPort = port.toIntOrNull() ?: 0
+                    runTask {
+                        withContext(Dispatchers.IO) { profileStore.removeHostKeyPin(endpointHost, endpointPort) }
+                        pinnedHostKeyExists = false
+                        notice = "Empreinte oubliée. La prochaine connexion demandera une nouvelle vérification."
+                    }
+                }) { Text("Oublier") }
+            },
+            dismissButton = { TextButton(onClick = { resetHostKeyDialog = false }) { Text("Annuler") } },
         )
     }
 

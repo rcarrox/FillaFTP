@@ -9,7 +9,7 @@ internal fun copyLocalToRemote(
     context: Context,
     source: DocumentFile,
     destinationPath: String,
-    session: FtpRepository,
+    session: RemoteFileSession,
 ) {
     val name = source.name ?: error("Le nom du fichier local est indisponible.")
     RemotePaths.requireValidName(name)
@@ -33,7 +33,7 @@ internal fun copyLocalToRemote(
 /** Copie un élément distant vers un dossier SAF local. Les cibles partielles sont supprimées en cas d'échec. */
 internal fun copyRemoteToLocal(
     context: Context,
-    session: FtpRepository,
+    session: RemoteFileSession,
     source: RemoteEntry,
     destinationDirectory: DocumentFile,
 ) {
