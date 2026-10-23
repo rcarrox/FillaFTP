@@ -11,6 +11,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -75,6 +77,7 @@ private data class PreviewDocument(val file: File, val name: String)
 private fun PocketFtpScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val profileStore = remember(context) { ConnectionProfileStore(context.applicationContext) }
     var tab by remember { mutableIntStateOf(1) } // Serveur en premier pour la première configuration
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf("") }
@@ -104,6 +107,18 @@ private fun PocketFtpScreen() {
     var pendingDownload by remember { mutableStateOf<RemoteEntry?>(null) }
     var transferClipboard by remember { mutableStateOf<TransferClipboard?>(null) }
     var previewDocument by remember { mutableStateOf<PreviewDocument?>(null) }
+    var profiles by remember { mutableStateOf<List<ConnectionProfile>>(emptyList()) }
+    var profileMenuExpanded by remember { mutableStateOf(false) }
+    var manageProfilesDialog by remember { mutableStateOf(false) }
+    var saveProfileDialog by remember { mutableStateOf(false) }
+    var profileToDelete by remember { mutableStateOf<ConnectionProfile?>(null) }
+    var profileName by remember { mutableStateOf("") }
+    var rememberProfilePassword by remember { mutableStateOf(false) }
+
+    LaunchedEffect(profileStore) {
+        try { profiles = withContext(Dispatchers.IO) { profileStore.list() } }
+        catch (e: Exception) { notice = e.localizedMessage ?: "Profils enregistrés illisibles." }
+    }
 
     DisposableEffect(previewDocument) {
         val file = previewDocument?.file
@@ -119,6 +134,15 @@ private fun PocketFtpScreen() {
             catch (e: Exception) { notice = e.localizedMessage ?: "Opération impossible." }
             finally { busy = false }
         }
+    }
+
+    fun loadProfile(profile: ConnectionProfile) {
+        host = profile.host
+        port = profile.port.toString()
+        user = profile.user
+        mode = profile.mode
+        password = profile.password
+        notice = if (profile.rememberPassword) "Profil chargé avec son mot de passe mémorisé." else "Profil chargé. Saisis le mot de passe pour te connecter."
     }
 
     fun refreshRemote(path: String = currentRemotePath) {
@@ -259,7 +283,7 @@ private fun PocketFtpScreen() {
             Text("PocketFTP", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
             if (busy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-            else Text("v0.4", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            else Text("v0.5", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Spacer(Modifier.height(12.dp))
         TabRow(selectedTabIndex = tab) {
@@ -273,6 +297,29 @@ private fun PocketFtpScreen() {
             if (session == null) {
                 Text("Connexion au serveur", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box {
+                        OutlinedButton(enabled = profiles.isNotEmpty(), onClick = { profileMenuExpanded = true }) {
+                            Text("Profils (${profiles.size})")
+                        }
+                        DropdownMenu(expanded = profileMenuExpanded, onDismissRequest = { profileMenuExpanded = false }) {
+                            profiles.forEach { profile ->
+                                DropdownMenuItem(
+                                    text = { Text("${profile.name} · ${profile.host}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                    onClick = { profileMenuExpanded = false; loadProfile(profile) },
+                                )
+                            }
+                        }
+                    }
+                    TextButton(enabled = profiles.isNotEmpty(), onClick = { manageProfilesDialog = true }) { Text("Gérer") }
+                    Spacer(Modifier.weight(1f))
+                    TextButton(enabled = !busy && host.isNotBlank(), onClick = {
+                        profileName = host.trim()
+                        rememberProfilePassword = false
+                        saveProfileDialog = true
+                    }) { Text("Enregistrer") }
+                }
+                Spacer(Modifier.height(4.dp))
                 OutlinedTextField(
                     host, { host = it }, label = { Text("Adresse du serveur") },
                     placeholder = { Text("ftp.exemple.fr") }, singleLine = true,
@@ -330,7 +377,7 @@ private fun PocketFtpScreen() {
                                 currentRemotePath = connected.initialDirectory
                                 remoteEntries = files
                                 if (transferClipboard?.remote != null) transferClipboard = null
-                                // Le mot de passe n'est jamais sauvegardé dans cette version.
+                                // Effacer le mot de passe du formulaire après la connexion.
                                 password = ""
                                 notice = "Connexion établie."
                             } catch (e: Exception) {
@@ -577,6 +624,109 @@ private fun PocketFtpScreen() {
         FilePreviewDialog(file = preview.file, name = preview.name) {
             previewDocument = null
         }
+    }
+
+    if (saveProfileDialog) {
+        AlertDialog(
+            onDismissRequest = { saveProfileDialog = false },
+            title = { Text("Enregistrer le profil") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = profileName,
+                        onValueChange = { profileName = it },
+                        label = { Text("Nom du profil") },
+                        singleLine = true,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = rememberProfilePassword, onCheckedChange = { rememberProfilePassword = it })
+                        Text("Mémoriser le mot de passe chiffré")
+                    }
+                    Text(
+                        "Les profils sont chiffrés avec une clé Android Keystore. Sans cette option, le mot de passe sera redemandé à chaque connexion.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = profileName.isNotBlank(), onClick = {
+                    val name = profileName.trim()
+                    val selectedPort = port.toIntOrNull()
+                    if (selectedPort == null || selectedPort !in 1..65535) {
+                        notice = "Indique un port valide avant d'enregistrer le profil."
+                        return@TextButton
+                    }
+                    val existing = profiles.firstOrNull { it.name.equals(name, ignoreCase = true) }
+                    val profile = ConnectionProfile(
+                        id = existing?.id ?: java.util.UUID.randomUUID().toString(),
+                        name = name,
+                        host = host.trim(),
+                        port = selectedPort,
+                        user = user,
+                        mode = mode,
+                        rememberPassword = rememberProfilePassword,
+                        password = if (rememberProfilePassword) password else "",
+                    )
+                    saveProfileDialog = false
+                    runTask {
+                        withContext(Dispatchers.IO) { profileStore.save(profile) }
+                        profiles = withContext(Dispatchers.IO) { profileStore.list() }
+                        notice = "Profil « $name » enregistré."
+                    }
+                }) { Text("Enregistrer") }
+            },
+            dismissButton = { TextButton(onClick = { saveProfileDialog = false }) { Text("Annuler") } },
+        )
+    }
+
+    if (manageProfilesDialog) {
+        AlertDialog(
+            onDismissRequest = { manageProfilesDialog = false },
+            title = { Text("Profils enregistrés") },
+            text = {
+                if (profiles.isEmpty()) Text("Aucun profil enregistré.")
+                else Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
+                    profiles.forEach { profile ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(profile.name, fontWeight = FontWeight.Medium)
+                                Text("${profile.mode} · ${profile.host}:${profile.port} · ${profile.user}", style = MaterialTheme.typography.bodySmall)
+                            }
+                            TextButton(onClick = {
+                                loadProfile(profile)
+                                manageProfilesDialog = false
+                            }) { Text("Charger") }
+                            IconButton(onClick = { profileToDelete = profile }) {
+                                Icon(Icons.Default.Delete, "Supprimer ${profile.name}", tint = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                        HorizontalDivider()
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { manageProfilesDialog = false }) { Text("Fermer") } },
+        )
+    }
+
+    profileToDelete?.let { profile ->
+        AlertDialog(
+            onDismissRequest = { profileToDelete = null },
+            title = { Text("Supprimer le profil ?") },
+            text = { Text("Le profil « ${profile.name} » et son mot de passe mémorisé seront supprimés de cet appareil.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    profileToDelete = null
+                    runTask {
+                        withContext(Dispatchers.IO) { profileStore.delete(profile.id) }
+                        profiles = withContext(Dispatchers.IO) { profileStore.list() }
+                        notice = "Profil supprimé."
+                    }
+                }) { Text("Supprimer", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { profileToDelete = null }) { Text("Annuler") } },
+        )
     }
 }
 
