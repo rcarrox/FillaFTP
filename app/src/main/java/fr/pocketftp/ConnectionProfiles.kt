@@ -23,6 +23,8 @@ internal data class ConnectionProfile(
     val password: String,
 )
 
+internal data class FavoriteDirectory(val path: String)
+
 /** Persists profiles as AES-GCM ciphertext; the AES key stays in Android Keystore. */
 internal class ConnectionProfileStore(context: Context) {
     private val preferences = context.getSharedPreferences("connection_profiles", Context.MODE_PRIVATE)
@@ -130,6 +132,84 @@ internal class ConnectionProfileStore(context: Context) {
         }
     }
 
+    @Synchronized
+    fun favoriteDirectories(mode: ConnectionMode, host: String, port: Int, user: String): List<FavoriteDirectory> =
+        allFavorites().filter { it.belongsTo(mode, host, port, user) }
+            .map { FavoriteDirectory(it.path) }
+            .sortedBy { it.path.lowercase() }
+
+    @Synchronized
+    fun addFavoriteDirectory(mode: ConnectionMode, host: String, port: Int, user: String, path: String) {
+        val normalized = RemotePaths.normalize(path)
+        val favorites = allFavorites().toMutableList()
+        if (favorites.none { it.matches(mode, host, port, user, normalized) }) {
+            favorites += StoredFavorite(mode, host.trim(), port, user, normalized)
+            saveFavorites(favorites)
+        }
+    }
+
+    @Synchronized
+    fun removeFavoriteDirectory(mode: ConnectionMode, host: String, port: Int, user: String, path: String) {
+        val normalized = RemotePaths.normalize(path)
+        val favorites = allFavorites().filterNot { it.matches(mode, host, port, user, normalized) }
+        saveFavorites(favorites)
+    }
+
+    private data class StoredFavorite(
+        val mode: ConnectionMode,
+        val host: String,
+        val port: Int,
+        val user: String,
+        val path: String,
+    ) {
+        fun belongsTo(mode: ConnectionMode, host: String, port: Int, user: String) =
+            this.mode == mode && this.host.equals(host.trim(), ignoreCase = true) && this.port == port && this.user == user
+
+        fun matches(mode: ConnectionMode, host: String, port: Int, user: String, path: String) =
+            belongsTo(mode, host, port, user) && this.path == path
+    }
+
+    private fun allFavorites(): List<StoredFavorite> {
+        val encrypted = preferences.getString(FAVORITES_KEY, null) ?: return emptyList()
+        val cleartext = try { decrypt(encrypted) }
+        catch (e: Exception) { throw IllegalStateException("Impossible de déchiffrer les favoris.", e) }
+        return try {
+            val array = JSONArray(cleartext)
+            (0 until array.length()).map { index ->
+                val item = array.getJSONObject(index)
+                StoredFavorite(
+                    mode = ConnectionMode.valueOf(item.getString("mode")),
+                    host = item.getString("host"),
+                    port = item.getInt("port"),
+                    user = item.getString("user"),
+                    path = RemotePaths.normalize(item.getString("path")),
+                )
+            }
+        } catch (e: Exception) {
+            throw IllegalStateException("Les favoris enregistrés sont illisibles.", e)
+        }
+    }
+
+    private fun saveFavorites(favorites: List<StoredFavorite>) {
+        if (favorites.isEmpty()) {
+            check(preferences.edit().remove(FAVORITES_KEY).commit()) { "Impossible de supprimer le favori." }
+            return
+        }
+        val array = JSONArray()
+        favorites.forEach { item ->
+            array.put(JSONObject().apply {
+                put("mode", item.mode.name)
+                put("host", item.host)
+                put("port", item.port)
+                put("user", item.user)
+                put("path", item.path)
+            })
+        }
+        check(preferences.edit().putString(FAVORITES_KEY, encrypt(array.toString())).commit()) {
+            "Impossible d'enregistrer les favoris."
+        }
+    }
+
     private fun hostKeyPins(): Map<String, String> {
         val encrypted = preferences.getString(HOST_KEYS_KEY, null) ?: return emptyMap()
         val cleartext = try { decrypt(encrypted) }
@@ -181,6 +261,7 @@ internal class ConnectionProfileStore(context: Context) {
     private companion object {
         const val PROFILES_KEY = "encrypted_profiles"
         const val HOST_KEYS_KEY = "encrypted_host_keys"
+        const val FAVORITES_KEY = "encrypted_favorite_directories"
         const val KEY_ALIAS = "pocketftp_connection_profiles"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
     }

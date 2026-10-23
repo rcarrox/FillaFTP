@@ -118,6 +118,9 @@ private fun PocketFtpScreen() {
     var profileToDelete by remember { mutableStateOf<ConnectionProfile?>(null) }
     var profileName by remember { mutableStateOf("") }
     var rememberProfilePassword by remember { mutableStateOf(false) }
+    var favoriteDirectories by remember { mutableStateOf<List<FavoriteDirectory>>(emptyList()) }
+    var favoritesMenuExpanded by remember { mutableStateOf(false) }
+    var manageFavoritesDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(profileStore) {
         try { profiles = withContext(Dispatchers.IO) { profileStore.list() } }
@@ -176,6 +179,9 @@ private fun PocketFtpScreen() {
             if (transferClipboard?.remote != null) transferClipboard = null
             password = ""
             pinnedHostKeyExists = selectedMode == ConnectionMode.SFTP
+            favoriteDirectories = withContext(Dispatchers.IO) {
+                store.favoriteDirectories(selectedMode, selectedHost, selectedPort, selectedUser)
+            }
             notice = "Connexion établie."
         } catch (e: Exception) {
             withContext(Dispatchers.IO) { connected.close() }
@@ -330,7 +336,7 @@ private fun PocketFtpScreen() {
             Text("PocketFTP", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
             if (busy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-            else Text("v0.6", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            else Text("v0.7", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Spacer(Modifier.height(12.dp))
         TabRow(selectedTabIndex = tab) {
@@ -453,6 +459,49 @@ private fun PocketFtpScreen() {
                         password = ""
                         scope.launch(Dispatchers.IO) { session.close() }
                     }) { Text("Quitter") }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box {
+                        OutlinedButton(enabled = !busy, onClick = { favoritesMenuExpanded = true }) {
+                            Text("Favoris (${favoriteDirectories.size})")
+                        }
+                        DropdownMenu(expanded = favoritesMenuExpanded, onDismissRequest = { favoritesMenuExpanded = false }) {
+                            favoriteDirectories.forEach { favorite ->
+                                DropdownMenuItem(
+                                    text = { Text(favorite.path, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                    onClick = {
+                                        favoritesMenuExpanded = false
+                                        refreshRemote(favorite.path)
+                                    },
+                                )
+                            }
+                            if (favoriteDirectories.isNotEmpty()) HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Gérer les favoris") },
+                                onClick = { favoritesMenuExpanded = false; manageFavoritesDialog = true },
+                            )
+                        }
+                    }
+                    val currentIsFavorite = favoriteDirectories.any { it.path == currentRemotePath }
+                    OutlinedButton(
+                        enabled = !busy && !currentIsFavorite,
+                        onClick = {
+                            val selectedMode = mode
+                            val selectedHost = host
+                            val selectedPort = port.toIntOrNull() ?: 0
+                            val selectedUser = user
+                            val selectedPath = currentRemotePath
+                            runTask {
+                                withContext(Dispatchers.IO) {
+                                    profileStore.addFavoriteDirectory(selectedMode, selectedHost, selectedPort, selectedUser, selectedPath)
+                                }
+                                favoriteDirectories = withContext(Dispatchers.IO) {
+                                    profileStore.favoriteDirectories(selectedMode, selectedHost, selectedPort, selectedUser)
+                                }
+                                notice = "Dossier ajouté aux favoris."
+                            }
+                        }
+                    ) { Text(if (currentIsFavorite) "★ Favori" else "☆ Ajouter") }
                 }
                 ExplorerToolbar(
                     path = currentRemotePath,
@@ -727,6 +776,49 @@ private fun PocketFtpScreen() {
         FilePreviewDialog(file = preview.file, name = preview.name) {
             previewDocument = null
         }
+    }
+
+    if (manageFavoritesDialog) {
+        AlertDialog(
+            onDismissRequest = { manageFavoritesDialog = false },
+            title = { Text("Dossiers favoris") },
+            text = {
+                if (favoriteDirectories.isEmpty()) Text("Aucun favori pour cette connexion.")
+                else Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
+                    favoriteDirectories.forEach { favorite ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                favorite.path,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            IconButton(onClick = {
+                                val selectedMode = mode
+                                val selectedHost = host
+                                val selectedPort = port.toIntOrNull() ?: 0
+                                val selectedUser = user
+                                runTask {
+                                    withContext(Dispatchers.IO) {
+                                        profileStore.removeFavoriteDirectory(
+                                            selectedMode, selectedHost, selectedPort, selectedUser, favorite.path
+                                        )
+                                    }
+                                    favoriteDirectories = withContext(Dispatchers.IO) {
+                                        profileStore.favoriteDirectories(selectedMode, selectedHost, selectedPort, selectedUser)
+                                    }
+                                    notice = "Favori supprimé."
+                                }
+                            }) {
+                                Icon(Icons.Default.Delete, "Supprimer ${favorite.path}", tint = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                        HorizontalDivider()
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { manageFavoritesDialog = false }) { Text("Fermer") } },
+        )
     }
 
     if (saveProfileDialog) {

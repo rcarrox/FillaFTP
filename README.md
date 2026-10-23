@@ -1,4 +1,4 @@
-# PocketFTP 0.6 — SFTP avec vérification de clé
+# PocketFTP 0.7 — favoris de dossiers
 
 Projet **Android natif Kotlin / Jetpack Compose**, en français.
 
@@ -7,6 +7,7 @@ Projet **Android natif Kotlin / Jetpack Compose**, en français.
 - Connexion **FTP**, **FTPS explicite** ou **SFTP** (ports par défaut : 21 pour FTP/FTPS, 22 pour SFTP ; modifiables).
 - FTPS : contrôle des certificats TLS et du nom d'hôte, canal de données protégé.
 - SFTP : vérification obligatoire de la clé d'hôte SSH avant l'envoi du mot de passe ; première empreinte SHA-256 présentée pour confirmation et mémorisée chiffrée avec Android Keystore. Une empreinte modifiée bloque la connexion.
+- Favoris de dossiers serveur, mémorisés par protocole, hôte, port et identifiant ; accès rapide, ajout depuis le dossier courant et suppression. Les favoris sont chiffrés avec Android Keystore.
 - Exploration des dossiers serveur, remontée d'un niveau, actualisation.
 - Envoi d'un ou plusieurs fichiers du téléphone (sélecteur Android) vers le dossier FTP affiché.
 - Téléchargement d'un fichier distant dans un emplacement choisi (sélecteur Android).
@@ -37,7 +38,7 @@ Projet **Android natif Kotlin / Jetpack Compose**, en français.
 3. Dans le dépôt GitHub, ajouter **tout le contenu intérieur** du dossier, y compris le dossier caché `.github`. La racine du dépôt doit contenir `app/`, `build.gradle.kts`, `settings.gradle.kts` et `.github/`.
 4. Commit des fichiers sur la branche `main`.
 5. Ouvrir **Actions** → **Compiler PocketFTP APK** (accepter l'activation des Actions si GitHub le demande).
-6. À la fin de l'exécution réussie, télécharger l'artefact `PocketFTP-0.6-APK`.
+6. À la fin de l'exécution réussie, télécharger l'artefact `PocketFTP-0.7-APK`.
 7. Décompresser cet artefact : il contient `app-debug.apk`.
 8. Transférer l'APK sur le téléphone, l'ouvrir, autoriser l'installation pour cette source Android si nécessaire, puis installer.
 
@@ -58,7 +59,8 @@ L'APK ainsi produit est une **version debug**, réservée aux tests. Pour une di
 4. Se connecter et naviguer dans un dossier de test.
 5. Créer `essai-pocketftp`, le renommer, puis le supprimer.
 6. Envoyer un fichier non sensible ; le télécharger et comparer les contenus.
-7. Tester le dossier Local avec « Choisir dossier ».
+7. Ajoute un dossier serveur aux favoris, ouvre un autre dossier, puis retrouve-le via le menu « Favoris ».
+8. Tester le dossier Local avec « Choisir dossier ».
 
 Ne pas tester une suppression sur un dossier de production. La connexion FTP basique n'est pas chiffrée : préférer FTPS et utiliser un compte de test limité à un dossier.
 
