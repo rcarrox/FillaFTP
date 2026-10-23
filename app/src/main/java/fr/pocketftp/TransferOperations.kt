@@ -69,6 +69,15 @@ internal fun copyRemoteToLocal(
 internal fun copyLocalToLocal(context: Context, source: DocumentFile, destinationDirectory: DocumentFile) {
     val name = source.name ?: error("Le nom du fichier local est indisponible.")
     RemotePaths.requireValidName(name)
+    if (source.isDirectory) {
+        var ancestor: DocumentFile? = destinationDirectory
+        while (ancestor != null) {
+            require(ancestor.uri != source.uri) {
+                "Impossible de copier un dossier dans lui-même ou dans l'un de ses sous-dossiers."
+            }
+            ancestor = ancestor.parentFile
+        }
+    }
     check(destinationDirectory.findFile(name) == null) {
         "Un élément porte déjà le nom $name dans ce dossier."
     }
