@@ -63,6 +63,12 @@ class FtpRepository private constructor(
                 ftp.connectTimeout = 12_000
                 ftp.defaultTimeout = 30_000
                 ftp.setDataTimeout(Duration.ofSeconds(60))
+                // A long upload can outlive a server's idle control-channel timeout.
+                ftp.setControlKeepAliveTimeout(Duration.ofSeconds(20))
+                ftp.setControlKeepAliveReplyTimeout(Duration.ofSeconds(10))
+                // EPSV avoids bad PASV addresses behind NAT; Commons Net falls back to PASV.
+                ftp.setUseEPSVwithIPv4(true)
+                ftp.setIpAddressFromPasvResponse(false)
                 ftp.connect(host.trim(), port)
                 check(FTPReply.isPositiveCompletion(ftp.replyCode)) {
                     "Connexion refusée : ${ftp.replyString.trim()}"
@@ -264,3 +270,4 @@ class FtpRepository private constructor(
         runCatching { if (client.isConnected) client.disconnect() }
     }
 }
+

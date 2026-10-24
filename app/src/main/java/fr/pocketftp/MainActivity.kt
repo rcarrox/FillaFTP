@@ -117,6 +117,7 @@ private fun PocketFtpScreen() {
     var saveProfileDialog by remember { mutableStateOf(false) }
     var profileToDelete by remember { mutableStateOf<ConnectionProfile?>(null) }
     var profileName by remember { mutableStateOf("") }
+    var profileDefaultDirectory by remember { mutableStateOf("") }
     var rememberProfilePassword by remember { mutableStateOf(false) }
     var favoriteDirectories by remember { mutableStateOf<List<FavoriteDirectory>>(emptyList()) }
     var favoritesMenuExpanded by remember { mutableStateOf(false) }
@@ -161,6 +162,7 @@ private fun PocketFtpScreen() {
         selectedPort: Int,
         selectedUser: String,
         selectedPassword: String,
+        selectedDefaultDirectory: String,
         verifiedFingerprint: String? = null,
     ) {
         val connected = withContext(Dispatchers.IO) {
@@ -172,9 +174,11 @@ private fun PocketFtpScreen() {
             }
         }
         try {
-            val files = withContext(Dispatchers.IO) { connected.list(connected.initialDirectory) }
+            val startDirectory = selectedDefaultDirectory.trim().takeIf(String::isNotEmpty)
+                ?.let(RemotePaths::normalize) ?: connected.initialDirectory
+            val files = withContext(Dispatchers.IO) { connected.list(startDirectory) }
             repository = connected
-            currentRemotePath = connected.initialDirectory
+            currentRemotePath = startDirectory
             remoteEntries = files
             if (transferClipboard?.remote != null) transferClipboard = null
             password = ""
@@ -195,6 +199,7 @@ private fun PocketFtpScreen() {
         user = profile.user
         mode = profile.mode
         password = profile.password
+        profileDefaultDirectory = profile.defaultDirectory
         notice = if (profile.rememberPassword) "Profil chargé avec son mot de passe mémorisé." else "Profil chargé. Saisis le mot de passe pour te connecter."
     }
 
@@ -336,7 +341,7 @@ private fun PocketFtpScreen() {
             Text("PocketFTP", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
             if (busy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-            else Text("v0.7", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            else Text("v0.8", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Spacer(Modifier.height(12.dp))
         TabRow(selectedTabIndex = tab) {
@@ -369,6 +374,9 @@ private fun PocketFtpScreen() {
                     TextButton(enabled = !busy && host.isNotBlank(), onClick = {
                         profileName = host.trim()
                         rememberProfilePassword = false
+                        profileDefaultDirectory = profiles.firstOrNull {
+                            it.name.equals(host.trim(), ignoreCase = true)
+                        }?.defaultDirectory.orEmpty()
                         saveProfileDialog = true
                     }) { Text("Enregistrer") }
                 }
@@ -436,8 +444,12 @@ private fun PocketFtpScreen() {
                         val selectedUser = user
                         val selectedPassword = password
                         val selectedPort = port.toIntOrNull() ?: 0
+                        val selectedDefaultDirectory = profileDefaultDirectory
                         runTask {
-                            connectToServer(profileStore, selectedMode, selectedHost, selectedPort, selectedUser, selectedPassword)
+                            connectToServer(
+                                profileStore, selectedMode, selectedHost, selectedPort, selectedUser, selectedPassword,
+                                selectedDefaultDirectory,
+                            )
                         }
                     }
                 ) { Text("Se connecter") }
@@ -677,11 +689,15 @@ private fun PocketFtpScreen() {
                     val selectedMode = ConnectionMode.SFTP
                     val selectedUser = user
                     val selectedPassword = password
+                    val selectedDefaultDirectory = profileDefaultDirectory
                     runTask {
                         withContext(Dispatchers.IO) {
                             profileStore.saveHostKeyPin(pending.host, pending.port, pending.fingerprint)
                         }
-                        connectToServer(profileStore, selectedMode, pending.host, pending.port, selectedUser, selectedPassword, pending.fingerprint)
+                        connectToServer(
+                            profileStore, selectedMode, pending.host, pending.port, selectedUser, selectedPassword,
+                            selectedDefaultDirectory, pending.fingerprint,
+                        )
                     }
                 }) { Text("Empreinte vérifiée, enregistrer") }
             },
@@ -834,6 +850,19 @@ private fun PocketFtpScreen() {
                         singleLine = true,
                     )
                     Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = profileDefaultDirectory,
+                        onValueChange = { profileDefaultDirectory = it },
+                        label = { Text("Dossier à ouvrir après connexion") },
+                        placeholder = { Text("Vide = dossier d’accueil du serveur") },
+                        singleLine = true,
+                    )
+                    Text(
+                        "Chemin distant, par exemple /documents. Laisse vide pour utiliser le dossier d’accueil.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = rememberProfilePassword, onCheckedChange = { rememberProfilePassword = it })
                         Text("Mémoriser le mot de passe chiffré")
@@ -863,6 +892,9 @@ private fun PocketFtpScreen() {
                         mode = mode,
                         rememberPassword = rememberProfilePassword,
                         password = if (rememberProfilePassword) password else "",
+                        defaultDirectory = profileDefaultDirectory.trim().let {
+                            if (it.isEmpty()) "" else RemotePaths.normalize(it)
+                        },
                     )
                     saveProfileDialog = false
                     runTask {
@@ -887,7 +919,15 @@ private fun PocketFtpScreen() {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(profile.name, fontWeight = FontWeight.Medium)
-                                Text("${profile.mode} · ${profile.host}:${profile.port} · ${profile.user}", style = MaterialTheme.typography.bodySmall)
+                                Text(
+                                    "${profile.mode} · ${profile.host}:${profile.port} · ${profile.user}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                                if (profile.defaultDirectory.isNotBlank()) Text(
+                                    "Ouverture : ${profile.defaultDirectory}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
                             TextButton(onClick = {
                                 loadProfile(profile)
@@ -1030,3 +1070,4 @@ private fun createPreviewTempFile(cacheDirectory: File, name: String): File {
     val extension = name.substringAfterLast('.', "").lowercase().filter(Char::isLetterOrDigit).take(8)
     return File.createTempFile("pocketftp-preview-", if (extension.isEmpty()) ".tmp" else ".$extension", cacheDirectory)
 }
+

@@ -21,6 +21,7 @@ internal data class ConnectionProfile(
     val mode: ConnectionMode,
     val rememberPassword: Boolean,
     val password: String,
+    val defaultDirectory: String = "",
 )
 
 internal data class FavoriteDirectory(val path: String)
@@ -48,6 +49,7 @@ internal class ConnectionProfileStore(context: Context) {
                     mode = mode,
                     rememberPassword = json.optBoolean("rememberPassword", false),
                     password = json.optString("password", ""),
+                    defaultDirectory = json.optString("defaultDirectory", ""),
                 )
             }
         } catch (e: Exception) {
@@ -71,6 +73,7 @@ internal class ConnectionProfileStore(context: Context) {
                 put("mode", item.mode.name)
                 put("rememberPassword", item.rememberPassword)
                 put("password", if (item.rememberPassword) item.password else "")
+                put("defaultDirectory", item.defaultDirectory)
             })
         }
         check(preferences.edit().putString(PROFILES_KEY, encrypt(array.toString())).commit()) {
@@ -95,6 +98,7 @@ internal class ConnectionProfileStore(context: Context) {
                     put("mode", item.mode.name)
                     put("rememberPassword", item.rememberPassword)
                     put("password", if (item.rememberPassword) item.password else "")
+                    put("defaultDirectory", item.defaultDirectory)
                 })
             }
             check(preferences.edit().putString(PROFILES_KEY, encrypt(array.toString())).commit()) {
@@ -266,3 +270,4 @@ internal class ConnectionProfileStore(context: Context) {
         const val TRANSFORMATION = "AES/GCM/NoPadding"
     }
 }
+
